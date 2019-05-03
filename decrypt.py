@@ -4,8 +4,8 @@ import binascii
 import codecs
 import sys
 import logging
-from Crypto import Random
-from Crypto.Cipher import AES
+from Cryptodome import Random
+from Cryptodome.Cipher import AES
 import xml.etree.ElementTree as ET
 #from impacket.winregistry import hexdump
 
@@ -18,12 +18,12 @@ keydata = None
 if len(sys.argv) < 2:
     print('usage: decrypt.py <file> [encoding]')
     sys.exit(1)
-    
+
 if len(sys.argv) > 2:
     encoding = sys.argv[2]
 else:
     encoding = 'utf-8'
-    
+
 infile = codecs.open(sys.argv[1], 'r', encoding)
 class LogFormatter(logging.Formatter):
   def __init__(self):
@@ -39,7 +39,7 @@ class LogFormatter(logging.Formatter):
     else:
       record.prefix = 'ERROR: '
 
-    return logging.Formatter.format(self, record)    
+    return logging.Formatter.format(self, record)
 
 handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(LogFormatter())
