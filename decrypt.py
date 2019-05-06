@@ -104,5 +104,4 @@ for index, record in enumerate(cryptedrecords):
     if el is not None:
         fpw = el.text
     if fpw:
-        fpw = fpw[:len(fpw)/2] + '...[REDACTED]'
         logging.info('\tPassword: %s', fpw)
