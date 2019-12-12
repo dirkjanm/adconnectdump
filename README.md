@@ -40,3 +40,5 @@ Local AD credentials
 You should call `adconnectdump.py` from Windows. It will dump the Azure AD connect credentials over the network similar to secretsdump.py (you also will need to have [impacket](https://github.com/SecureAuthCorp/impacket) and `pycryptodomex` installed to run this). ADSyncQuery.exe should be in the same directory as it will be used to parse the database that is downloaded (this requires MSSQL LocalDB installed on your host).
 
 ![dump example](exampledump.png)
+
+Alternatively you can run the tool on any OS, wait for it to download the DB and error out, then copy the mdf and ldf files to your Windows machine with MSSQL, run `ADSyncQuery.exe c:\absolute\path\to\ADSync.mdf > out.txt` and use this `out.txt` on your the system which can reach the Azure AD connect host with `--existing-db` and `--from-file out.txt` to do the rest.

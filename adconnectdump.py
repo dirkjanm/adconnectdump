@@ -58,13 +58,17 @@ class RemoteFileRO(RemoteFile):
             self._RemoteFile__fid = None
 
 class ADSRemoteOperations(RemoteOperations):
-    def __init__(self, smbConnection, doKerberos, kdcHost=None):
+    def __init__(self, smbConnection, doKerberos, kdcHost=None, options=None):
         RemoteOperations.__init__(self, smbConnection, doKerberos, kdcHost)
         self.__smbConnection = smbConnection
         self.__serviceName = 'ADSync'
         self.__shouldStart = False
+        self.__options = options
 
     def gatherAdSyncMdb(self):
+        # Assume DB was already downloaded
+        if self.__options.existing_db:
+            return
         self.__connectSvcCtl()
         try:
             self.__checkServiceStatus()
@@ -183,15 +187,23 @@ class ADSRemoteOperations(RemoteOperations):
         return cryptkey
 
     def getMdbData(self):
-        dbpath = os.path.join(os.getcwd(), r"ADSync.mdf")
-        output = subprocess.Popen(["ADSyncQuery.exe", dbpath], stdout=subprocess.PIPE).communicate()[0]
+
         out = {
             'cryptedrecords': [],
             'xmldata': []
         }
         keydata = None
-        # infile = codecs.open('out.txt', 'r', 'utf-8')
-        for line in output.split('\n'):
+        #
+        if self.__options.from_file:
+            logging.info('Loading configuration data from %s on filesystem', self.__options.from_file)
+            infile = codecs.open(self.__options.from_file, 'r', 'utf-16-le')
+            enumtarget = infile
+        else:
+            logging.info('Querying database for configuration data')
+            dbpath = os.path.join(os.getcwd(), r"ADSync.mdf")
+            output = subprocess.Popen(["ADSyncQuery.exe", dbpath], stdout=subprocess.PIPE).communicate()[0]
+            enumtarget = output.split('\n')
+        for line in enumtarget:
             try:
                 ltype, data = line.strip().split(': ')
             except ValueError:
@@ -207,7 +219,8 @@ class ADSRemoteOperations(RemoteOperations):
                 out['instance'] = instance
                 out['keyset_id'] = keyset_id
                 out['entropy'] = entropy
-
+        if self.__options.from_file:
+            infile.close()
         return out
 
 
@@ -375,10 +388,10 @@ class DumpSecrets:
                     else:
                         raise
 
-                self.__remoteOps  = ADSRemoteOperations(self.__smbConnection, self.__doKerberos, self.__kdcHost)
+                self.__remoteOps  = ADSRemoteOperations(self.__smbConnection, self.__doKerberos, self.__kdcHost, self.__options)
                 self.fetchMdb()
-                logging.info('Querying database for configuration data')
                 mdbdata = self.getMdbData()
+                logging.info('Querying LSA secrets from remote registry')
                 self.__remoteOps.enableRegistry()
                 bootKey = self.__remoteOps.getBootKey()
             except Exception, e:
@@ -538,6 +551,9 @@ if __name__ == '__main__':
                                                        ' (if you want to parse local files)')
     parser.add_argument('-debug', action='store_true', help='Turn DEBUG output ON')
     parser.add_argument('--legacy', action='store_true', help='Use legacy keyset storage location (registry)')
+    parser.add_argument('--existing-db', action='store_true', help='Do not download the MDB but assume it is already in the current directory')
+    parser.add_argument('--from-file', action='store', metavar="FILE",
+                        help='Read the output of ADSyncQuery from a file you created previously instead of doing it live')
     parser.add_argument('-outputfile', action='store',
                         help='base output filename. Extensions will be added for sam, secrets, cached and ntds')
     group = parser.add_argument_group('authentication')
