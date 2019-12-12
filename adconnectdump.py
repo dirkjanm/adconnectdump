@@ -214,7 +214,7 @@ class ADSRemoteOperations(RemoteOperations):
             remoteFileName.close()
         return cryptkey
 
-    def getMdbData(self):
+    def getMdbData(self, codec='utf-8'):
 
         out = {
             'cryptedrecords': [],
@@ -224,7 +224,7 @@ class ADSRemoteOperations(RemoteOperations):
         #
         if self.__options.from_file:
             logging.info('Loading configuration data from %s on filesystem', self.__options.from_file)
-            infile = codecs.open(self.__options.from_file, 'r', 'utf-16-le')
+            infile = codecs.open(self.__options.from_file, 'r', codec)
             enumtarget = infile
         else:
             logging.info('Querying database for configuration data')
@@ -406,7 +406,10 @@ class DumpSecrets:
         self.__remoteOps.gatherAdSyncMdb()
 
     def getMdbData(self):
-        return self.__remoteOps.getMdbData()
+        try:
+            return self.__remoteOps.getMdbData()
+        except UnicodeDecodeError:
+            return self.__remoteOps.getMdbData('utf-16-le')
 
     def dump(self):
         try:
