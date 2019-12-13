@@ -24,8 +24,8 @@ import hashlib
 import binascii
 import codecs
 import sys
-from Crypto import Random
-from Crypto.Cipher import AES
+from Cryptodome import Random
+from Cryptodome.Cipher import AES
 
 def unpad(s):
     return s[:-ord(s[len(s)-1:])]
