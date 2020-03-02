@@ -10,7 +10,10 @@ namespace ADSyncDecrypt
         static void Main(string[] args)
         {
             KeyManager keyManager = new KeyManager();
-            using (SqlConnection conn = new SqlConnection("Data Source=(LocalDB)\\.\\ADSync;Initial Catalog=ADSync;Connect Timeout=30"))
+
+            string connectionString = (args.Length == 0) ? "Data Source=(LocalDB)\\.\\ADSync;Initial Catalog=ADSync;Connect Timeout=30" : args[0];
+            Console.WriteLine("Opening database {0}", connectionString);
+            using (SqlConnection conn = new SqlConnection(connectionString))
             {
                 conn.Open();
                 SqlCommand command = new SqlCommand("SELECT instance_id, keyset_id, entropy FROM mms_server_configuration;", conn);
