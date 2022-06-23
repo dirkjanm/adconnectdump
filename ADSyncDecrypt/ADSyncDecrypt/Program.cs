@@ -14,8 +14,8 @@ namespace ADSyncDecrypt
         [DllImport("advapi32", SetLastError = true), SuppressUnmanagedCodeSecurityAttribute]
         static extern int OpenProcessToken(
         System.IntPtr ProcessHandle, // handle to process
-        int DesiredAccess, // desired access to process
-        ref IntPtr TokenHandle // handle to open access token
+        int DesiredAccess,          // desired access to process
+        ref IntPtr TokenHandle     // handle to open access token
         );
 
         [DllImport("kernel32", SetLastError = true), SuppressUnmanagedCodeSecurityAttribute]
@@ -92,8 +92,8 @@ namespace ADSyncDecrypt
                 command = new SqlCommand("SELECT private_configuration_xml, encrypted_configuration FROM mms_management_agent;", conn);
                 reader = command.ExecuteReader();
 
-                Impersonate_Process("winlogon"); // get system in order to impersonate the adsync user.
-                Impersonate_Process("miiserver");
+                Impersonate_Process("winlogon");  // get system in order to impersonate the adsync user.
+                Impersonate_Process("miiserver"); // get the ADSync service process (miiserver.exe) token.
                 KeyManager keyManager = new KeyManager();
                 keyManager.LoadKeySet(entropy, instance_id, keyset_id);
                 Key credKey = null;
