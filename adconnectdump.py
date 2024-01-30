@@ -230,7 +230,7 @@ class ADSRemoteOperations(RemoteOperations):
             logging.info('Querying database for configuration data')
             dbpath = os.path.join(os.getcwd(), r"ADSync.mdf")
             output = subprocess.Popen(["ADSyncQuery.exe", dbpath], stdout=subprocess.PIPE).communicate()[0]
-            enumtarget = output.split('\n')
+            enumtarget = output.decode(codec).split('\n')
         for line in enumtarget:
             try:
                 ltype, data = line.strip().split(': ')
