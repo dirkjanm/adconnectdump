@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Security;
 using System.Security.Principal;
+using Microsoft.Win32;
 
 namespace ADSyncDecrypt
 {
@@ -71,9 +72,20 @@ namespace ADSyncDecrypt
             return dupeTokenHandle;
         }
 
+        static string DB_Configuration()
+        {
+            const string parametersKey = "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\ADSync\\Parameters";
+            string dBServer = (string)Registry.GetValue(parametersKey, "Server", "(LocalDB)");
+            string dBName = (string)Registry.GetValue(parametersKey, "DBName", "ADSync");
+            string dBInstance = (string)Registry.GetValue(parametersKey, "SQLInstance", ".\\ADSync2019");
+            string connection_string = "Data Source=" + dBServer + "\\" + dBInstance + ";Initial Catalog=" + dBName + ";Connect Timeout=30";
+
+            return connection_string;
+        }
+
         static void Main(string[] args)
         {
-            string connectionString = (args.Length == 0) ? "Data Source=(LocalDB)\\.\\ADSync2019;Initial Catalog=ADSync;Connect Timeout=30" : args[0];
+            string connectionString = (args.Length == 0) ? DB_Configuration() : args[0];
             Console.WriteLine("Opening database {0}", connectionString);
             using (SqlConnection conn = new SqlConnection(connectionString))
             {

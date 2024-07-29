@@ -74,10 +74,19 @@ class ADSRemoteOperations(RemoteOperations):
         try:
             self.__checkServiceStatus()
             logging.info('Downloading ADSync database files')
-            with open('ADSync.mdf','wb') as fh:
-                self.__smbConnection.getFile('C$',r'Program Files\Microsoft Azure AD Sync\Data\ADSync2019\ADSync.mdf', fh.write)
-            with open('ADSync_log.LDF','wb') as fh:
-                self.__smbConnection.getFile('C$',r'Program Files\Microsoft Azure AD Sync\Data\ADSync2019\ADSync_log.ldf', fh.write)
+            fileNames = []
+            for files in self.__smbConnection.listPath('C$',r'Program Files\Microsoft Azure AD Sync\Data\*'):
+                fileNames.append(files.get_longname())
+            if "ADSync.mdf" in fileNames:
+                with open('ADSync.mdf','wb') as fh:
+                    self.__smbConnection.getFile('C$',r'Program Files\Microsoft Azure AD Sync\Data\ADSync.mdf', fh.write)
+                with open('ADSync_log.LDF','wb') as fh:
+                    self.__smbConnection.getFile('C$',r'Program Files\Microsoft Azure AD Sync\Data\ADSync_log.ldf', fh.write)
+            else:
+                with open('ADSync.mdf','wb') as fh:
+                    self.__smbConnection.getFile('C$',r'Program Files\Microsoft Azure AD Sync\Data\ADSync2019\ADSync.mdf', fh.write)
+                with open('ADSync_log.LDF','wb') as fh:
+                    self.__smbConnection.getFile('C$',r'Program Files\Microsoft Azure AD Sync\Data\ADSync2019\ADSync_log.ldf', fh.write)
         finally:
             self.__restore_adsync()
 
