@@ -5,7 +5,7 @@ This toolkit offers several ways to extract and decrypt stored Entra ID (Azure A
 
 Note that the storage method of the credentials was changed in late 2019. The ADSyncDecrypt tool will automatically impersonate the `NT SERVICE\ADSync` service to extract the credentials via DPAPI. ADSyncGather is not compatible with the updated credential storage, but adconnectdump.py/ADSyncQuery should be working. The inner workings of this method are described in [this blog](https://dirkjanm.io/updating-adconnectdump-a-journey-into-dpapi/).
 
-In 2025, Microsoft introduced the option of using a Service Principal identity for Entra ID connect instead of a user account. The tool ADSyncCertDump is compatible with this.
+In 2025, Microsoft introduced the option of using a Service Principal identity for Entra ID connect instead of a user account. The tool ADSyncCertDump is compatible with this. The code for this tool is based on [Shwmae by Ceri Coburn](https://github.com/CCob/Shwmae) and used under the BSD-3-Clause license.
 
 # Tool comparison
 This repository features 3 different ways of dumping credentials. 
