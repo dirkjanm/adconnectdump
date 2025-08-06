@@ -1,7 +1,7 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 15
-VisualStudioVersion = 15.0.27703.2026
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36121.58 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ADSyncDecrypt", "ADSyncDecrypt\ADSyncDecrypt.csproj", "{AF860885-DA5B-4752-8501-D5FD421C23A2}"
 EndProject
@@ -10,6 +10,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ADSyncGather", "ADSyncGather\ADSyncGather.csproj", "{B36167D7-6468-4130-8E4B-82B247679455}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ADSyncQuery", "ADSyncQuery\ADSyncQuery.csproj", "{B0CA789F-9460-4BD4-BD93-5D225632D33C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ADSyncCertDump", "ADSyncCertDump\ADSyncCertDump.csproj", "{A63CA184-30C5-4739-9DB0-5A7E84FC714C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -41,6 +43,14 @@ Global
 		{B0CA789F-9460-4BD4-BD93-5D225632D33C}.Release|Any CPU.Build.0 = Release|Any CPU
 		{B0CA789F-9460-4BD4-BD93-5D225632D33C}.Release|x64.ActiveCfg = Release|Any CPU
 		{B0CA789F-9460-4BD4-BD93-5D225632D33C}.Release|x64.Build.0 = Release|Any CPU
+		{A63CA184-30C5-4739-9DB0-5A7E84FC714C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A63CA184-30C5-4739-9DB0-5A7E84FC714C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A63CA184-30C5-4739-9DB0-5A7E84FC714C}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A63CA184-30C5-4739-9DB0-5A7E84FC714C}.Debug|x64.Build.0 = Debug|Any CPU
+		{A63CA184-30C5-4739-9DB0-5A7E84FC714C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A63CA184-30C5-4739-9DB0-5A7E84FC714C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A63CA184-30C5-4739-9DB0-5A7E84FC714C}.Release|x64.ActiveCfg = Release|Any CPU
+		{A63CA184-30C5-4739-9DB0-5A7E84FC714C}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
