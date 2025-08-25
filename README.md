@@ -1,5 +1,5 @@
 # Azure AD Connect / Entra ID connect credential extraction tools
-[![Build Status](https://dev.azure.com/dirkjanm/adconnectdump/_apis/build/status/fox-it.adconnectdump?branchName=master)](https://dev.azure.com/dirkjanm/adconnectdump/_build/latest?definitionId=16&branchName=master)
+[![Build Status](https://dev.azure.com/dirkjanm/adconnectdump/_apis/build/status/dirkjanm.adconnectdump?branchName=master)](https://dev.azure.com/dirkjanm/adconnectdump/_build/latest?definitionId=20&branchName=master)
 
 This toolkit offers several ways to extract and decrypt stored Entra ID (Azure AD) and Active Directory credentials from Entra ID Connect servers. These credentials have high privileges in both the on-premise directory and the cloud. The tools were originally released as part of my Azure AD presentation at TROOPERS 19. For more info on the technical background you can watch the presentation on [YouTube](https://www.youtube.com/watch?v=JEIR5oGCwdg) or view the slides [here](https://www.slideshare.net/DirkjanMollema/im-in-your-cloud-reading-everyones-email-hacking-azure-ad-via-active-directory).  You can download the latest binaries of this tool [here](https://dev.azure.com/dirkjanm/adconnectdump/_build/latest?definitionId=20&branchName=master) (click on "1 published" in the middle of the page to download the binaries).
 
