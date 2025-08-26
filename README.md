@@ -13,6 +13,7 @@ This repository features 3 different ways of dumping credentials.
 - **ADSyncGather**: Queries the credentials and the encryption keys on the target host, decryption is done locally (python). No DLL dependencies.
 - **ADSyncQuery**: Queries the credentials from the database that is saved locally. Requires MSSQL LocalDB to be installed. No DLL dependencies. Is called from `adconnectdump.py`, dumps data without executing anything on the Azure AD connect host.
 - **ADSyncCertDump**: For Service Principal based setups. Will dump the certificate and private key if it is a software based key, or will sign an assertion to be used with roadtx if the key is TPM stored. Needs to be run on the target host with Administrator privileges.
+- **ADSyncDump-BOF**: Decrypts the credentials fully on the target host via any C2 framework that supports execution of Beacon Object Files (BOFs), without any need for AD Connect DLL's to be present in the PATH. 
 
 The following table highlights the differences between the techniques:
 
@@ -22,6 +23,7 @@ ADSyncDecrypt | Yes | Yes | No | No | No
 ADSyncGather | Yes | No | No | Yes | No
 ADSyncQuery | No (network RPC calls only) | No | Yes | Yes | No
 ADSyncCertDump | Yes | No | No | No | Yes
+ADSyncDump-BOF | Yes | No | No | No | No 
 
 # Usage
 ## ADSyncDecrypt
@@ -53,3 +55,26 @@ The ADSyncCertDump tool is for extracting the credentials or assertion of the Se
 ```
 Usage: ADSyncCertDump.exe <cert thumbprint> <client_id> <tenant_id>
 ```
+
+## ADSyncDump-BOF
+The [ADSyncDump-BOF](https://github.com/Paradoxis/ADSyncDump-BOF) is a Beacon Object File (BOF) variant of ADSyncDecrypt written by @Paradoxis, however it does not depend on any external DLL's for decryption, and can be executed from any C2 framework that supports BOFs (i.e.: Cobalt Strike, Sliver, etc). The tool only targets the legacy setup which stored passwords in the ADSync database, as opposed to the newer service-principal setup. The BOF can be built using `make` and be executed with a single command in Cobalt Strike & Sliver by default:
+
+```
+beacon> adsyncdump
+Found 'miiserver.exe' with PID: 5176
+Using ODBC driver: ODBC Driver 17 for SQL Server
+
+Successfully obtained ADSync instance metadata:
+
+        Instance ID: REDACTED
+        Entropy ID: REDACTED
+        Keyset ID: REDACTED
+
+Successfully obtained ADSync instance key materials.
+Successfully impersonated ADSync database server token.
+Successfully decrypted ADSync configuration.
+
+        ADSync username: Sync_DC01_REDACTED@REDACTED.onmicrosoft.com
+        ADSync password: REDACTED
+```
+
